@@ -1,0 +1,591 @@
+//typedef struct{
+// dfloat u,v,p,w;
+//}uvp_t;
+
+// function to compute surface contributions
+// for nodal DG acoustics right hand side
+
+// baseline kernel
+kernel void meshAcousticsSurface2D_s0(const iint Nelements,
+				      const dfloat * restrict sgeo,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat * restrict q,
+				      dfloat       * restrict rhsq){
+
+  // for all elements
+  for(iint e=0;e<Nelements;++e;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // for all face nodes of all elements
+    for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+	// find face that owns this node
+	iint f = n/p_Nfp;
+
+        // for each node on this face
+        iint i = n - f*p_Nfp;
+
+	// find index
+	iint sid = p_Nsgeo*(p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+	dfloat nx = sgeo[sid+0];
+	dfloat ny = sgeo[sid+1];
+	dfloat sJ = sgeo[sid+2];
+	dfloat invJ = sgeo[sid+3];
+
+	// indices of negative and positive traces of face node
+	iint id  = e*p_Nfp*p_Nfaces + f*p_Nfp + i;
+	iint idM = p_Nfields*vmapM[id];
+	iint idP = p_Nfields*vmapP[id];
+
+	if(idP<0){
+	  idP = idM;
+	}
+
+	// load negative and positive trace node values of q
+	dfloat uM = q[idM+0], vM = q[idM+1], pM = q[idM+2];
+	dfloat uP = q[idP+0], vP = q[idP+1], pP = q[idP+2];
+
+	if(idM==idP || idP<0){
+	  // assert Neumann for pressure and no penetration for velocity
+	  uP = -uM;
+	  vP = -vM;
+	  pP =  pM;
+	}
+
+	// compute (q^* - q^-)
+	dfloat duS = 0.5*(uP-uM) + p_Lambda2*(-nx)*(pP-pM);
+	dfloat dvS = 0.5*(vP-vM) + p_Lambda2*(-ny)*(pP-pM);
+	dfloat dpS = 0.5*(pP-pM) + p_Lambda2*(-nx*(uP-uM)-ny*(vP-vM));
+
+	// evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+        fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	// store incremented rhs
+	rhsq[idM]   += fluxu;
+	rhsq[idM+1] += fluxv;
+	rhsq[idM+2] += fluxp;
+    }
+  }
+}
+
+#if 1
+
+// using floa4 for q and rhsq
+kernel void meshAcousticsSurface2D_s1(const iint Nelements,
+				      const dfloat * restrict sgeo,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat4 * restrict q4,
+				      dfloat4       * restrict rhsq4){
+
+  // for all elements
+  for(iint e=0;e<Nelements;++e;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // for all face nodes of all elements
+    for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+	// find face that owns this node
+	iint f = n/p_Nfp;
+
+        // for each node on this face
+        iint i = n - f*p_Nfp;
+
+	// find index
+	iint sid = p_Nsgeo*(p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+	dfloat nx = sgeo[sid+0];
+	dfloat ny = sgeo[sid+1];
+	dfloat sJ = sgeo[sid+2];
+	dfloat invJ = sgeo[sid+3];
+
+	// indices of negative and positive traces of face node
+	iint id  = e*p_Nfp*p_Nfaces + f*p_Nfp + i;
+	iint idM = p_Nfields*vmapM[id];
+	iint idP = p_Nfields*vmapP[id];
+
+	if(idP<0){
+	  idP = idM;
+	}
+
+	// load negative and positive trace node values of q4
+        dfloat4 qM = q4[idM], qP = q4[idP];
+
+	dfloat uM = qM.x, vM = qM.y, pM = qM.z;
+	dfloat uP = qP.x, vP = qP.y, pP = qP.z;
+
+	if(idM==idP || idP<0){
+	  // assert Neumann for pressure and no penetration for velocity
+	  uP = -uM;
+	  vP = -vM;
+	  pP =  pM;
+	}
+
+	// compute (q^* - q^-)
+	dfloat duS = 0.5*(uP-uM) + p_Lambda2*(-nx)*(pP-pM);
+	dfloat dvS = 0.5*(vP-vM) + p_Lambda2*(-ny)*(pP-pM);
+	dfloat dpS = 0.5*(pP-pM) + p_Lambda2*(-nx*(uP-uM)-ny*(vP-vM));
+
+	// evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+        fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	// store incremented rhs
+	rhsq4[idM].x += fluxu;
+	rhsq4[idM].y += fluxv;
+	rhsq4[idM].z += fluxp;
+    }
+  }
+}
+
+// using float4 for sgeo
+kernel void meshAcousticsSurface2D_s2(const iint Nelements,
+				      const dfloat4 * restrict sgeo4,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat4 * restrict q4,
+				      dfloat4       * restrict rhsq4){
+
+  // for all elements
+  for(iint e=0;e<Nelements;++e;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // for all face nodes of all elements
+    for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+	// find face that owns this node
+	iint f = n/p_Nfp;
+
+        // for each node on this face
+        iint i = n - f*p_Nfp;
+
+	// find index
+	iint sid = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+        dfloat4 sgeon = sgeo4[sid];
+	dfloat nx = sgeon.x;
+	dfloat ny = sgeon.y;
+	dfloat sJ = sgeon.z;
+	dfloat invJ = sgeon.w;
+
+	// indices of negative and positive traces of face node
+	iint id  = e*p_Nfp*p_Nfaces + f*p_Nfp + i;
+	iint idM = p_Nfields*vmapM[id];
+	iint idP = p_Nfields*vmapP[id];
+
+	if(idP<0){
+	  idP = idM;
+	}
+
+	// load negative and positive trace node values of q4
+        dfloat4 qM = q4[idM], qP = q4[idP];
+
+	dfloat uM = qM.x, vM = qM.y, pM = qM.z;
+	dfloat uP = qP.x, vP = qP.y, pP = qP.z;
+
+	if(idM==idP || idP<0){
+	  // assert Neumann for pressure and no penetration for velocity
+	  uP = -uM;
+	  vP = -vM;
+	  pP =  pM;
+	}
+
+	// compute (q^* - q^-)
+	dfloat duS = 0.5*(uP-uM) + p_Lambda2*(-nx)*(pP-pM);
+	dfloat dvS = 0.5*(vP-vM) + p_Lambda2*(-ny)*(pP-pM);
+	dfloat dpS = 0.5*(pP-pM) + p_Lambda2*(-nx*(uP-uM)-ny*(vP-vM));
+
+	// evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+        fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	// store incremented rhs
+	rhsq4[idM].x += fluxu;
+	rhsq4[idM].y += fluxv;
+	rhsq4[idM].z += fluxp;
+    }
+  }
+}
+
+// s3: batch process elements (using float4 for sgeo, q and rhsq)
+kernel void meshAcousticsSurface2D_s3(const iint Nelements,
+				      const dfloat4 * restrict sgeo4,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat4 * restrict q4,
+				      dfloat4       * restrict rhsq4){
+
+  // for all elements
+  for(iint eo=0;eo<Nelements;eo+=p_NblockS;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // need to check
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // find index
+	  iint sid = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          dfloat4 sgeon = sgeo4[sid];
+	  dfloat nx = sgeon.x;
+	  dfloat ny = sgeon.y;
+	  dfloat sJ = sgeon.z;
+	  dfloat invJ = sgeon.w;
+
+	  // indices of negative and positive traces of face node
+	  iint id  = e*p_Nfp*p_Nfaces + f*p_Nfp + i;
+	  iint idM = p_Nfields*vmapM[id];
+	  iint idP = p_Nfields*vmapP[id];
+
+	  if(idP<0){
+	    idP = idM;
+	  }
+
+	  // load negative and positive trace node values of q4
+          dfloat4 qM = q4[idM], qP = q4[idP];
+
+	  dfloat uM = qM.x, vM = qM.y, pM = qM.z;
+	  dfloat uP = qP.x, vP = qP.y, pP = qP.z;
+
+	  if(idM==idP || idP<0){
+	    // assert Neumann for pressure and no penetration for velocity
+	    uP = -uM;
+	    vP = -vM;
+	    pP =  pM;
+	  }
+
+	  // compute (q^* - q^-)
+	  dfloat duS = 0.5*(uP-uM) + p_Lambda2*(-nx)*(pP-pM);
+	  dfloat dvS = 0.5*(vP-vM) + p_Lambda2*(-ny)*(pP-pM);
+	  dfloat dpS = 0.5*(pP-pM) + p_Lambda2*(-nx*(uP-uM)-ny*(vP-vM));
+
+	  // evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+          fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	  fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	  fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	  // store incremented rhs
+	  rhsq4[idM].x += fluxu;
+	  rhsq4[idM].y += fluxv;
+	  rhsq4[idM].z += fluxp;
+        }
+      }
+    }
+  }
+}
+
+// s4: batch process elements
+kernel void meshAcousticsSurface2D_s4(const iint Nelements,
+				      const dfloat * restrict sgeo,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat * restrict q,
+				      dfloat       * restrict rhsq){
+
+  // for all elements
+  for(iint eo=0;eo<Nelements;eo+=p_NblockS;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // need to check
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // find index
+	  iint sid = p_Nsgeo*(p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+	  dfloat nx = sgeo[sid+0];
+	  dfloat ny = sgeo[sid+1];
+	  dfloat sJ = sgeo[sid+2];
+	  dfloat invJ = sgeo[sid+3];
+
+	  // indices of negative and positive traces of face node
+	  iint id  = e*p_Nfp*p_Nfaces + f*p_Nfp + i;
+	  iint idM = p_Nfields*vmapM[id];
+	  iint idP = p_Nfields*vmapP[id];
+
+	  if(idP<0){
+	    idP = idM;
+	  }
+
+	  // load negative and positive trace node values of q
+	  dfloat uM = q[idM+0], vM = q[idM+1], pM = q[idM+2];
+	  dfloat uP = q[idP+0], vP = q[idP+1], pP = q[idP+2];
+
+	  if(idM==idP || idP<0){
+	    // assert Neumann for pressure and no penetration for velocity
+	    uP = -uM;
+	    vP = -vM;
+	    pP =  pM;
+	  }
+
+	  // compute (q^* - q^-)
+	  dfloat duS = 0.5*(uP-uM) + p_Lambda2*(-nx)*(pP-pM);
+	  dfloat dvS = 0.5*(vP-vM) + p_Lambda2*(-ny)*(pP-pM);
+	  dfloat dpS = 0.5*(pP-pM) + p_Lambda2*(-nx*(uP-uM)-ny*(vP-vM));
+
+	  // evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+          fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	  fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	  fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	  rhsq[idM]   += fluxu;
+	  rhsq[idM+1] += fluxv;
+	  rhsq[idM+2] += fluxp;
+        }
+      }
+    }
+  }
+}
+
+// s5: load q in shared memory (using float4 for sgeo, q and rhsq)
+kernel void meshAcousticsSurface2D_s5(const iint Nelements,
+				      const dfloat4 * restrict sgeo4,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat4 * restrict q4,
+				      dfloat4       * restrict rhsq4){
+
+  // for all elements
+  for(iint eo=0;eo<Nelements;eo+=p_NblockS;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // shared memory for q (but whether there are enough shared memory?)
+    shared dfloat s_uM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_vM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_pM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_uP[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_vP[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_pP[p_NblockS][p_Nfp*p_Nfaces];
+
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // indices of negative and positive traces of face node
+	  iint id = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          iint idM = p_Nfields*vmapM[id];
+          iint idP = p_Nfields*vmapP[id];
+
+	  if(idP<0){
+	    idP = idM;
+	  }
+
+	  // load negative and positive trace node values of q4
+          dfloat4 qM = q4[idM], qP = q4[idP];
+
+	  s_uM[es][n] = qM.x; s_vM[es][n] = qM.y, s_pM[es][n] = qM.z;
+	  s_uP[es][n] = qP.x; s_vP[es][n] = qP.y, s_pP[es][n] = qP.z;
+
+	  if(idM==idP || idP<0){
+	    // assert Neumann for pressure and no penetration for velocity
+	    s_uP[es][n] = -s_uM[es][n];
+	    s_vP[es][n] = -s_vM[es][n];
+	    s_pP[es][n] =  s_pM[es][n];
+	  }
+        }
+      }
+    }
+
+    // barrier, make sure that all node data is loaded into shared.
+    barrier(localMemFence);
+
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // find index
+	  iint sid = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          dfloat4 sgeon = sgeo4[sid];
+	  dfloat nx = sgeon.x;
+	  dfloat ny = sgeon.y;
+	  dfloat sJ = sgeon.z;
+	  dfloat invJ = sgeon.w;
+
+	  // indices of negative and positive traces of face node
+	  iint id = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          iint idM = p_Nfields*vmapM[id];
+
+	  // compute (q^* - q^-)
+	  dfloat duS = 0.5*(s_uP[es][n]-s_uM[es][n]) + p_Lambda2*(-nx)*(s_pP[es][n]-s_pM[es][n]);
+	  dfloat dvS = 0.5*(s_vP[es][n]-s_vM[es][n]) + p_Lambda2*(-ny)*(s_pP[es][n]-s_pM[es][n]);
+	  dfloat dpS = 0.5*(s_pP[es][n]-s_pM[es][n]) +
+                       p_Lambda2*(-nx*(s_uP[es][n]-s_uM[es][n])-ny*(s_vP[es][n]-s_vM[es][n]));
+
+	  // evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+          fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	  fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	  fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	  // store incremented rhs
+	  rhsq4[idM].x += fluxu;
+	  rhsq4[idM].y += fluxv;
+	  rhsq4[idM].z += fluxp;
+        }
+      }
+    }
+  }
+}
+
+// s6: load q in shared memory
+kernel void meshAcousticsSurface2D_s6(const iint Nelements,
+				      const dfloat * restrict sgeo,
+				      const iint   * restrict vmapM,
+				      const iint   * restrict vmapP,
+				      const dfloat * restrict q,
+				      dfloat       * restrict rhsq){
+
+  // for all elements
+  for(iint eo=0;eo<Nelements;eo+=p_NblockS;outer0){
+
+    // temporary storage for flux terms
+    dfloat fluxu;
+    dfloat fluxv;
+    dfloat fluxp;
+
+    // shared memory for q (but whether there are enough shared memory?)
+    shared dfloat s_uM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_vM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_pM[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_uP[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_vP[p_NblockS][p_Nfp*p_Nfaces];
+    shared dfloat s_pP[p_NblockS][p_Nfp*p_Nfaces];
+
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // indices of negative and positive traces of face node
+	  iint id = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          iint idM = p_Nfields*vmapM[id];
+          iint idP = p_Nfields*vmapP[id];
+
+	  if(idP<0){
+	    idP = idM;
+	  }
+
+	  // load negative and positive trace node values of q4
+	  s_uM[es][n] = q[idM+0]; s_vM[es][n] = q[idM+1], s_pM[es][n] = q[idM+2];
+	  s_uP[es][n] = q[idP+0]; s_vP[es][n] = q[idP+1], s_pP[es][n] = q[idP+2];
+
+	  if(idM==idP || idP<0){
+	    // assert Neumann for pressure and no penetration for velocity
+	    s_uP[es][n] = -s_uM[es][n];
+	    s_vP[es][n] = -s_vM[es][n];
+	    s_pP[es][n] =  s_pM[es][n];
+	  }
+        }
+      }
+    }
+
+    // barrier, make sure that all node data is loaded into shared.
+    barrier(localMemFence);
+
+    for(iint es=0;es<p_NblockS;++es;inner1){
+
+      // for all face nodes of all elements
+      for(iint n=0;n<p_Nfp*p_Nfaces;++n;inner0){
+        iint e = eo + es;
+        if(e<Nelements){
+	  // find face that owns this node
+	  iint f = n/p_Nfp;
+
+          // for each node on this face
+          iint i = n - f*p_Nfp;
+
+	  // find index
+	  iint sid = p_Nsgeo*(p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+	  dfloat nx = sgeo[sid+0];
+	  dfloat ny = sgeo[sid+1];
+	  dfloat sJ = sgeo[sid+2];
+	  dfloat invJ = sgeo[sid+3];
+
+	  // indices of negative and positive traces of face node
+	  iint id = (p_Nfaces*p_Nfp*e+p_Nfp*f+i);
+          iint idM = p_Nfields*vmapM[id];
+
+	  // compute (q^* - q^-)
+	  dfloat duS = 0.5*(s_uP[es][n]-s_uM[es][n]) + p_Lambda2*(-nx)*(s_pP[es][n]-s_pM[es][n]);
+	  dfloat dvS = 0.5*(s_vP[es][n]-s_vM[es][n]) + p_Lambda2*(-ny)*(s_pP[es][n]-s_pM[es][n]);
+	  dfloat dpS = 0.5*(s_pP[es][n]-s_pM[es][n]) +
+                       p_Lambda2*(-nx*(s_uP[es][n]-s_uM[es][n])-ny*(s_vP[es][n]-s_vM[es][n]));
+
+	  // evaluate "flux" terms: (sJ/J)*(A*nx+B*ny)*(q^* - q^-)
+          fluxu = 1.0/p_w*invJ*sJ*(-nx*dpS);
+	  fluxv = 1.0/p_w*invJ*sJ*(-ny*dpS);
+	  fluxp = 1.0/p_w*invJ*sJ*(-nx*duS-ny*dvS);
+
+	  // store incremented rhs
+	  rhsq[idM]   += fluxu;
+	  rhsq[idM+1] += fluxv;
+	  rhsq[idM+2] += fluxp;
+        }
+      }
+    }
+  }
+}
+
+#endif

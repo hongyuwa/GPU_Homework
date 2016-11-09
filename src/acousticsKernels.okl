@@ -1,0 +1,126 @@
+#define RXID 0  
+#define RYID 1  
+#define SXID 2  
+#define SYID 3  
+
+// [-dpdx;-dpdy;-dudx-dvdy]
+kernel void acousticsVolume2D_v0(int Nelements, 
+				 int Np, 
+				 int Nvgeo,
+				 dfloat * vgeo, 
+				 dfloat * Dr, 
+				 dfloat * Ds,
+				 dfloat4 * q, 
+				 dfloat4 * rhsq){
+  
+  // loop over elements
+  for(int e=0;e<Nelements;++e;outer0){
+    // load geometric factors
+    dfloat drdx = vgeo[e*Nvgeo + RXID];
+    dfloat drdy = vgeo[e*Nvgeo + RYID];
+    dfloat dsdx = vgeo[e*Nvgeo + SXID];
+    dfloat dsdy = vgeo[e*Nvgeo + SYID];
+
+    // compute gradient at each node
+    for(int n=0;n<Np;++n;inner0){
+
+      // matrix-vector multiplies
+      dfloat4 dqdr, dqds;
+      dqdr.x = 0; dqdr.y = 0; dqdr.z = 0; dqdr.w = 0;
+      dqds.x = 0; dqds.y = 0; dqds.z = 0; dqds.w = 0;
+
+      // \sum_m Dr(n,m)*q(m,e), \sum_m Ds(n,m)*q(m,e)
+      for(int m=0;m<Np;++m){
+	dqdr += Dr[n*Np + m]*q[m + e*Np];
+	dqds += Ds[n*Np + m]*q[m + e*Np];
+      }
+      
+      dfloat4 rhsqen;
+      rhsqen.x = -drdx*dqdr.z - dsdx*dqds.z; // -dpdx
+      rhsqen.y = -drdy*dqdr.z - dsdy*dqds.z; // -dpdy
+      rhsqen.z = -drdx*dqdr.x - dsdx*dqds.x - drdy*dqdr.y - dsdy*dqds.y; // -dudx-dvdy
+      rhsqen.w = 0; // placeholder
+      // chain rule
+      rhsq[n+e*Np] = rhsqen;
+    }
+  }
+}
+
+
+// LIFT*[-nx*(p* - p-); -ny*(p* - p-); -nx*(u* - u-) - ny*(v* - v-)]
+kernel void acousticsSurface_v0(int Nelements, 
+				int Np,
+				int Nfaces, 
+				int Nfp, 
+				int *vmapM,
+				int *vmapP,
+				int Nsgeo,
+				dfloat  *sgeo, 
+				dfloat   Lambda
+				dfloat  *LIFT,
+				dfloat4 *q, 
+				dfloat4 *rhsq){
+  
+  // loop over elements
+  for(int e=0;e<Nelements;++e;outer0){
+
+    shared dfloat s_fluxu[Nfaces*Nfp];
+    shared dfloat s_fluxv[Nfaces*Nfp];
+    shared dfloat s_fluxp[Nfaces*Nfp];
+
+    // enough iterations that we can read from face nodes and then write to volume nodes
+    for(int n=0;n<max(Nfaces*Nfp, Np);++n;inner0){
+      int face = n/Nfp;
+
+      if(n<Nfp*Nfaces){
+	// load trace node indices
+	int id  = n + e*Nfaces*Nfp;
+	int idM = vmapM[id];
+	int idP = vmapP[id];
+
+	// load negative and positive trace nodes for element e, node n
+	dfloat4 qM = q[idM];
+	dfloat4 qP = q[idP];
+
+	// load and upack geometric factors
+	dfloat4 fgeo = sgeo[face+e*Nfaces*Nsgeo];
+	dfloat nx = fgeo.x;
+	dfloat nx = fgeo.y;
+	dfloat sJ = fgeo.z;
+	dfloat Jinv = fgeo.w;
+
+	// compute jumps in u,v,p
+	dfloat du = qP.x-qM.x;
+	dfloat dv = qP.y-qM.y;
+	dfloat dp = qP.z-qM.z;
+	
+	// (I+L*F)*dq where F = (nx*A + ny*B)
+	dfloat duS = 0.5*du - Lambda2*nx*dp;
+	dfloat dvS = 0.5*dv - Lambda2*ny*dp;
+	dfloat dpS = 0.5*dp - Lambda2*(nx*du+ny*dp);
+	// F*(I+L*F)*dq
+	s_fluxu[n] = -nx*dpS;
+	s_fluxv[n] = -ny*dpS;
+	s_fluxp[n] = -nx*duS-ny*dvS;
+      }
+    }
+
+    barrier(localMemFence);
+
+    for(int n=0;n<max(Nfaces*Nfp, Np);++n;inner0){
+
+      if(n<Np){
+
+	dfloat4 rhsqen = rhsq[n+Np*e];
+	// increment rhs by \sum_m LIFT(n,m)*[sfluxu(m,e);sfluxv(m,e);sfluxp(m,e)]
+	for(int m=0;m<Nfaces*Nfp;++m){
+	  rhsqen.x += LIFT[n+m*Np]*s_fluxu[m];
+	  rhsqen.y += LIFT[n+m*Np]*s_fluxv[m];
+	  rhsqen.z += LIFT[n+m*Np]*s_fluxp[m];
+	}
+	
+	rhsq[n+Np*e] = rhseqn;
+      }
+    }
+  }
+}
