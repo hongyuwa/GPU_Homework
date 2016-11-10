@@ -263,7 +263,7 @@ kernel void meshAcousticsVolume2D_o3(const iint Nelements,
             // differentiate (u,v,p) with respect to 'r' and 's'
             dudr += Drni*s_u[es][idr]; duds += Dsni*s_u[es][ids];
             dvdr += Drni*s_v[es][idr]; dvds += Dsni*s_v[es][ids];
-            dpdr += Drni*s_v[es][idr]; dpds += Dsni*s_p[es][ids];
+            dpdr += Drni*s_p[es][idr]; dpds += Dsni*s_p[es][ids];
           }
 
 	  // chain rule
@@ -347,7 +347,7 @@ kernel void meshAcousticsVolume2D_o4(const iint Nelements,
             // differentiate (u,v,p) with respect to 'r' and 's'
             dudr += Drni*s_u[es][idr]; duds += Dsni*s_u[es][ids];
             dvdr += Drni*s_v[es][idr]; dvds += Dsni*s_v[es][ids];
-            dpdr += Drni*s_v[es][idr]; dpds += Dsni*s_p[es][ids];
+            dpdr += Drni*s_p[es][idr]; dpds += Dsni*s_p[es][ids];
           }
 
 	  // chain rule
@@ -435,7 +435,7 @@ kernel void meshAcousticsVolume2D_o5(const iint Nelements,
 	    // differentiate (u,v,p) with respect to 'r' and 's'
             dudr += Drni*s_u[es][idr]; duds += Dsni*s_u[es][ids];
             dvdr += Drni*s_v[es][idr]; dvds += Dsni*s_v[es][ids];
-            dpdr += Drni*s_v[es][idr]; dpds += Dsni*s_p[es][ids];
+            dpdr += Drni*s_p[es][idr]; dpds += Dsni*s_p[es][ids];
 	  }
 
 	  // chain rule
@@ -443,6 +443,94 @@ kernel void meshAcousticsVolume2D_o5(const iint Nelements,
 	  const dfloat dvdy = drdy*dvdr + dsdy*dvds;
 	  const dfloat dpdx = drdx*dpdr + dsdx*dpds;
 	  const dfloat dpdy = drdy*dpdr + dsdy*dpds;
+
+	  // store acoustics rhs contributions from collocation differentiation
+	  const iint id = e*p_Np + n;
+	  dfloat4 rhsq4n;
+	  rhsq4n.x = -dpdx;
+	  rhsq4n.y = -dpdy;
+	  rhsq4n.z = -dudx-dvdy;
+	  rhsq4[id] = rhsq4n;
+	}
+      }
+    }
+  }
+}
+
+// o6: vgeo into shared
+kernel void meshAcousticsVolume2D_o6(const iint Nelements,
+				     const dfloat * restrict vgeo,
+				     const dfloat * restrict DT,
+				     const dfloat4 * restrict q4,
+				     dfloat4 * restrict rhsq4){
+
+  for(iint eo=0;eo<Nelements;eo+=p_NblockV;outer0){  // for all elements
+
+    shared dfloat s_u[p_NblockV][p_Np];
+    shared dfloat s_v[p_NblockV][p_Np];
+    shared dfloat s_p[p_NblockV][p_Np];
+
+    shared dfloat s_DT[p_N+1][p_N+1];
+
+    shared dfloat s_vgeo[p_NblockV][p_Nvgeo*p_Np];
+
+    for(iint es=0;es<p_NblockV;++es;inner1){// for all elements in block
+      for(iint n=0;n<p_Np;++n;inner0){     // for all nodes in this element
+	// prefetch D into shared
+	s_DT[0][n] = DT[n];
+
+	iint e = eo+es; // element in block
+	if(e<Nelements){
+	  const iint id = e*p_Np + n;
+	  const dfloat4 q4n = q4[id];
+	  s_u[es][n] = q4n.x;
+	  s_v[es][n] = q4n.y;
+	  s_p[es][n] = q4n.z;
+
+	  const iint gid = e*p_Nvgeo*p_Np + n;
+	  for(iint k=0;k<p_Nvgeo;++k){
+            s_vgeo[es][n + p_Np*k] = vgeo[gid + p_Np*k];
+	  }
+	}
+      }
+    }
+
+    // make sure all node data is loaded into shared
+    barrier(localMemFence);
+
+    for(iint es=0;es<p_NblockV;++es;inner1){// for all elements in block
+      for(iint n=0;n<p_Np;++n;inner0){     // for all nodes in this element
+
+	iint e = eo+es; // element in block
+	if(e<Nelements){
+
+          iint i = n%(p_N+1);
+          iint j = n/(p_N+1);
+
+	  // compute 'r' and 's' derivatives of (u,v,p) at node n
+	  dfloat dudr = 0, duds = 0;
+	  dfloat dvdr = 0, dvds = 0;
+	  dfloat dpdr = 0, dpds = 0;
+
+          occaUnroll(p_N+1)
+          for(iint m=0;m<p_N+1;++m){
+            const iint idr = m + j*(p_N+1);
+            const iint ids = i + m*(p_N+1);
+
+            const dfloat Drni = s_DT[m][i];
+	    const dfloat Dsni = s_DT[m][j];
+
+	    // differentiate (u,v,p) with respect to 'r' and 's'
+            dudr += Drni*s_u[es][idr]; duds += Dsni*s_u[es][ids];
+            dvdr += Drni*s_v[es][idr]; dvds += Dsni*s_v[es][ids];
+            dpdr += Drni*s_p[es][idr]; dpds += Dsni*s_p[es][ids];
+	  }
+
+	  // chain rule
+	  const dfloat dudx = s_vgeo[es][n + p_Np*RXID]*dudr + s_vgeo[es][n + p_Np*SXID]*duds;
+	  const dfloat dvdy = s_vgeo[es][n + p_Np*RYID]*dvdr + s_vgeo[es][n + p_Np*SYID]*dvds;
+	  const dfloat dpdx = s_vgeo[es][n + p_Np*RXID]*dpdr + s_vgeo[es][n + p_Np*SXID]*dpds;
+	  const dfloat dpdy = s_vgeo[es][n + p_Np*RYID]*dpdr + s_vgeo[es][n + p_Np*SYID]*dpds;
 
 	  // store acoustics rhs contributions from collocation differentiation
 	  const iint id = e*p_Np + n;
